@@ -6,7 +6,7 @@ services:
     plan: free
     rootDir: backend
     buildCommand: "./build.sh"
-    startCommand: "gunicorn eduoo.wsgi:application --bind 0.0.0.0:$PORT"
+    startCommand: "python manage.py migrate --noinput && gunicorn eduoo.wsgi:application --bind 0.0.0.0:$PORT"
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
@@ -20,6 +20,8 @@ services:
         value: "True"
       - key: FRONTEND_URL
         value: "https://eduoo.vercel.app"
+      - key: REQUIRE_EMAIL_VERIFICATION
+        value: "False"
       - key: GEMINI_API_KEY
         sync: false
       - key: TOKEN_HARBOR_API_KEY
@@ -39,4 +41,3 @@ databases:
   - name: eduoo-db
     plan: free
     region: oregon
-
