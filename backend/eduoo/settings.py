@@ -179,10 +179,17 @@ SPECTACULAR_SETTINGS = {
 }
 
 # Real-Time Email Configuration
+# Supports:
+# 1. Resend REST API (HTTPS port 443 - 100% reliable on Render, AWS, Heroku)
+# 2. Brevo REST API (HTTPS port 443) or Brevo SMTP Relay (smtp-relay.brevo.com:587)
+# 3. Standard SMTP (Gmail, SendGrid, etc.)
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
+BREVO_API_KEY = os.getenv("BREVO_API_KEY", "").strip()
+
 _email_host_user = os.getenv("EMAIL_HOST_USER", "").strip()
 _configured_backend = os.getenv("EMAIL_BACKEND", "").strip()
 
-if _email_host_user:
+if _email_host_user or RESEND_API_KEY or BREVO_API_KEY:
     EMAIL_BACKEND = _configured_backend or "django.core.mail.backends.smtp.EmailBackend"
 else:
     EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
@@ -197,10 +204,17 @@ else:
     EMAIL_USE_SSL = False
 EMAIL_HOST_USER = _email_host_user
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "").replace(" ", "").strip()
-DEFAULT_FROM_EMAIL = os.getenv(
-    "DEFAULT_FROM_EMAIL",
-    f"Eduoo AI <{_email_host_user}>" if _email_host_user else "Eduoo AI <notifications@eduoo.ai>",
-)
+
+_default_from = os.getenv("DEFAULT_FROM_EMAIL", "").strip()
+if _default_from:
+    DEFAULT_FROM_EMAIL = _default_from
+elif RESEND_API_KEY:
+    DEFAULT_FROM_EMAIL = "Eduoo AI <onboarding@resend.dev>"
+elif _email_host_user:
+    DEFAULT_FROM_EMAIL = f"Eduoo AI <{_email_host_user}>"
+else:
+    DEFAULT_FROM_EMAIL = "Eduoo AI <notifications@eduoo.ai>"
+
 EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "10"))
 
 # Registration & Email Verification Policy

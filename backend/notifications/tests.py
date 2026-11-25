@@ -81,3 +81,49 @@ class TestNotificationsAPI:
         assert res.status_code == 200
         assert res.json()["success"] is True
         assert "tester@example.com" in res.json()["recipient"]
+
+    def test_timeout_error_handling(self, monkeypatch):
+        from notifications.email_service import EmailNotificationService
+
+        def mock_send(*args, **kwargs):
+            raise TimeoutError("timed out")
+
+        monkeypatch.setattr("django.core.mail.EmailMultiAlternatives.send", mock_send)
+        result = EmailNotificationService._dispatch_raw_email(
+            recipient="test@example.com",
+            subject="Test Subject",
+            html_body="<p>Test</p>",
+            text_body="Test",
+        )
+        assert result["success"] is False
+        assert "timed out" in result["error"].lower()
+        assert "render" in result["error"].lower()
+
+    def test_resend_api_dispatch(self, monkeypatch):
+        from notifications.email_service import EmailNotificationService
+        from django.conf import settings
+
+        monkeypatch.setattr(settings, "RESEND_API_KEY", "re_test_key_12345")
+
+        class MockResponse:
+            status_code = 200
+            text = '{"id": "msg_123"}'
+            headers = {"content-type": "application/json"}
+
+            def json(self):
+                return {"id": "msg_123"}
+
+        def mock_post(*args, **kwargs):
+            return MockResponse()
+
+        import requests
+        monkeypatch.setattr(requests, "post", mock_post)
+
+        result = EmailNotificationService._dispatch_raw_email(
+            recipient="resend_user@example.com",
+            subject="Resend Test",
+            html_body="<p>Hi</p>",
+            text_body="Hi",
+        )
+        assert result["success"] is True
+        assert result["provider"] == "resend"

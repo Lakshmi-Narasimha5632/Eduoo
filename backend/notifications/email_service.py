@@ -137,6 +137,149 @@ class EmailNotificationService:
         }
 
     @classmethod
+    def _dispatch_raw_email(
+        cls,
+        recipient: str,
+        subject: str,
+        html_body: str,
+        text_body: str,
+    ) -> Dict[str, Any]:
+        """
+        Dispatches an email across available transports in priority order:
+        1. Resend REST API (HTTPS port 443 - 100% reliable on Render, AWS, Heroku)
+        2. Brevo REST API (HTTPS port 443)
+        3. Django Mail Backend (SMTP / Brevo Relay / Console)
+        """
+        import os
+
+        # 1. Try Resend HTTPS API if key configured
+        resend_api_key = getattr(settings, "RESEND_API_KEY", "") or os.getenv("RESEND_API_KEY", "")
+        resend_api_key = resend_api_key.strip() if resend_api_key else ""
+        if resend_api_key:
+            try:
+                import requests
+                from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "Eduoo AI <onboarding@resend.dev>")
+                if "onboarding@resend.dev" not in from_email and not os.getenv("RESEND_CUSTOM_DOMAIN"):
+                    from_email = "Eduoo AI <onboarding@resend.dev>"
+
+                resp = requests.post(
+                    "https://api.resend.com/emails",
+                    headers={
+                        "Authorization": f"Bearer {resend_api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "from": from_email,
+                        "to": [recipient],
+                        "subject": subject,
+                        "html": html_body,
+                        "text": text_body,
+                    },
+                    timeout=10,
+                )
+                if resp.status_code in (200, 201):
+                    logger.info("Successfully delivered email '%s' to %s via Resend HTTPS API", subject, recipient)
+                    return {
+                        "success": True,
+                        "recipient": recipient,
+                        "message": f"Real-time email delivered to {recipient} via Resend",
+                        "provider": "resend",
+                    }
+                else:
+                    err_info = resp.text
+                    try:
+                        err_info = resp.json().get("message", resp.text)
+                    except Exception:
+                        pass
+                    logger.warning("Resend HTTPS API returned status %s: %s. Falling back...", resp.status_code, err_info)
+            except Exception as resend_exc:
+                logger.warning("Resend HTTPS API dispatch failed: %s. Falling back...", resend_exc)
+
+        # 2. Try Brevo HTTPS API if key configured
+        brevo_api_key = getattr(settings, "BREVO_API_KEY", "") or os.getenv("BREVO_API_KEY", "")
+        brevo_api_key = brevo_api_key.strip() if brevo_api_key else ""
+        if brevo_api_key:
+            try:
+                import requests
+                from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "Eduoo AI <notifications@eduoo.ai>")
+                sender_email = from_email
+                sender_name = "Eduoo AI"
+                if "<" in from_email and ">" in from_email:
+                    sender_name = from_email.split("<")[0].strip() or "Eduoo AI"
+                    sender_email = from_email.split("<")[1].split(">")[0].strip()
+
+                resp = requests.post(
+                    "https://api.brevo.com/v3/smtp/email",
+                    headers={
+                        "api-key": brevo_api_key,
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "sender": {"name": sender_name, "email": sender_email},
+                        "to": [{"email": recipient}],
+                        "subject": subject,
+                        "htmlContent": html_body,
+                        "textContent": text_body,
+                    },
+                    timeout=10,
+                )
+                if resp.status_code in (200, 201):
+                    logger.info("Successfully delivered email '%s' to %s via Brevo HTTPS API", subject, recipient)
+                    return {
+                        "success": True,
+                        "recipient": recipient,
+                        "message": f"Real-time email delivered to {recipient} via Brevo",
+                        "provider": "brevo",
+                    }
+                else:
+                    logger.warning("Brevo API returned status %s: %s. Falling back...", resp.status_code, resp.text)
+            except Exception as brevo_exc:
+                logger.warning("Brevo API dispatch failed: %s. Falling back...", brevo_exc)
+
+        # 3. Fall back to standard Django Mail Backend (SMTP / Brevo Relay / Console)
+        from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "Eduoo AI <notifications@eduoo.ai>")
+        try:
+            msg = EmailMultiAlternatives(
+                subject=subject,
+                body=text_body,
+                from_email=from_email,
+                to=[recipient],
+            )
+            msg.attach_alternative(html_body, "text/html")
+            msg.send(fail_silently=False)
+            logger.info("Successfully delivered email '%s' to %s via Django mail backend", subject, recipient)
+            return {"success": True, "recipient": recipient, "message": f"Real-time email delivered to {recipient}"}
+        except Exception as exc:
+            raw_error = str(exc)
+            lower_err = raw_error.lower()
+            if "timed out" in lower_err or isinstance(exc, (TimeoutError, OSError)):
+                host = getattr(settings, "EMAIL_HOST", "smtp.gmail.com")
+                port = getattr(settings, "EMAIL_PORT", 587)
+                error_msg = (
+                    f"Email connection to {host}:{port} timed out. "
+                    "Render blocks direct outbound connections to Gmail SMTP. "
+                    "To fix this on Render, use Resend (add RESEND_API_KEY in Render) or "
+                    "Brevo (set EMAIL_HOST=smtp-relay.brevo.com in Render)."
+                )
+            elif "534" in raw_error or "WebLoginRequired" in raw_error:
+                error_msg = (
+                    "Google rejected the login (534 WebLoginRequired / App Password required). "
+                    "Please ensure: 1) 2-Step Verification is turned ON for this Google account, "
+                    "2) The 16-letter App Password was generated at https://myaccount.google.com/apppasswords, "
+                    "and 3) Unlock SMTP access at https://accounts.google.com/DisplayUnlockCaptcha."
+                )
+            elif "535" in raw_error or "BadCredentials" in raw_error:
+                error_msg = (
+                    "Google rejected the credentials (535 BadCredentials). "
+                    "Please verify the 16-letter App Password in Render environment variables was copied correctly."
+                )
+            else:
+                error_msg = raw_error
+
+            logger.error("Failed to deliver email '%s' to %s: %s", subject, recipient, error_msg)
+            return {"success": False, "recipient": recipient, "error": error_msg}
+
+    @classmethod
     def _send_custom_html_email(
         cls,
         recipient: str,
@@ -147,39 +290,17 @@ class EmailNotificationService:
     ) -> Dict[str, Any]:
         """Dispatches an email with custom HTML & plain text bodies."""
         def _task():
-            from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "Eduoo AI <notifications@eduoo.ai>")
-            try:
-                msg = EmailMultiAlternatives(
-                    subject=subject,
-                    body=text_body,
-                    from_email=from_email,
-                    to=[recipient],
-                )
-                msg.attach_alternative(html_body, "text/html")
-                msg.send(fail_silently=False)
-                logger.info("Successfully delivered custom email '%s' to %s", subject, recipient)
-                return {"success": True, "recipient": recipient, "message": "Email delivered successfully"}
-            except Exception as exc:
-                raw_error = str(exc)
-                if "534" in raw_error or "WebLoginRequired" in raw_error:
-                    error_msg = (
-                        "Google rejected the login (534 WebLoginRequired / App Password required). "
-                        "Please ensure: 1) 2-Step Verification is turned ON for this Google account, "
-                        "2) The 16-letter App Password was generated while logged into this exact Gmail account at https://myaccount.google.com/apppasswords, "
-                        "and 3) Unlock SMTP access at https://accounts.google.com/DisplayUnlockCaptcha while logged into this account."
-                    )
-                elif "535" in raw_error or "BadCredentials" in raw_error:
-                    error_msg = (
-                        "Google rejected the credentials (535 BadCredentials). "
-                        "Please verify the 16-letter App Password in .env was copied correctly."
-                    )
-                else:
-                    error_msg = raw_error
-
-                # Prominently print in terminal console so local developers/users see OTPs/reports immediately
+            res = cls._dispatch_raw_email(
+                recipient=recipient,
+                subject=subject,
+                html_body=html_body,
+                text_body=text_body,
+            )
+            if not res.get("success"):
+                error_msg = res.get("error", "Unknown email delivery error")
                 try:
                     print("\n" + "=" * 70, flush=True)
-                    print("[WARNING] [EDUOO EMAIL SMTP DELIVERY FAILED]", flush=True)
+                    print("[WARNING] [EDUOO EMAIL DELIVERY FAILED]", flush=True)
                     print(f"Recipient: {recipient}", flush=True)
                     print(f"Subject:   {subject}", flush=True)
                     print(f"Reason:    {error_msg}", flush=True)
@@ -188,9 +309,7 @@ class EmailNotificationService:
                     print("=" * 70 + "\n", flush=True)
                 except Exception:
                     pass
-
-                logger.error("Failed to deliver custom email '%s' to %s: %s", subject, recipient, error_msg)
-                return {"success": False, "recipient": recipient, "error": error_msg}
+            return res
 
         if sync:
             return _task()
@@ -573,17 +692,14 @@ Resume and finish your tasks now at: http://localhost:5173/daily-tasks
             metrics=metrics,
         )
 
-        try:
-            msg = EmailMultiAlternatives(
-                subject=subject,
-                body=text_content,
-                from_email=from_email,
-                to=[recipient],
-            )
-            msg.attach_alternative(html_content, "text/html")
-            msg.send(fail_silently=False)
+        dispatch_res = cls._dispatch_raw_email(
+            recipient=recipient,
+            subject=subject,
+            html_body=html_content,
+            text_body=text_content,
+        )
 
-            # Record success on notification
+        if dispatch_res.get("success"):
             try:
                 Notification.objects.filter(id=notification_id).update(
                     email_sent=True,
@@ -593,22 +709,11 @@ Resume and finish your tasks now at: http://localhost:5173/daily-tasks
                 )
             except Exception:
                 pass
-
             logger.info("Successfully sent real-time notification email to %s for notif #%s", recipient, notification_id)
             return {"success": True, "message": f"Real-time email successfully delivered to {recipient}"}
-
-        except Exception as exc:
-            raw_error = str(exc)
-            if "535" in raw_error or "BadCredentials" in raw_error:
-                error_msg = (
-                    "Google rejected the credentials (535 BadCredentials). "
-                    "Please ensure: 1) The 16-letter App Password was generated while logged into this exact Gmail account, "
-                    "2) 2-Step Verification is active, and 3) Unlock SMTP access at https://accounts.google.com/DisplayUnlockCaptcha."
-                )
-            else:
-                error_msg = raw_error
-
-            logger.error("Failed to send real-time notification email to %s: %s", recipient, raw_error)
+        else:
+            error_msg = dispatch_res.get("error", "Unknown email delivery failure")
+            logger.error("Failed to send real-time notification email to %s for notif #%s: %s", recipient, notification_id, error_msg)
             try:
                 Notification.objects.filter(id=notification_id).update(
                     email_sent=False,
@@ -617,8 +722,6 @@ Resume and finish your tasks now at: http://localhost:5173/daily-tasks
                 )
             except Exception:
                 pass
-            if sync:
-                return {"success": False, "error": error_msg}
             return {"success": False, "error": error_msg}
 
     @staticmethod
