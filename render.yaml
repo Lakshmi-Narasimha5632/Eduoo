@@ -39,3 +39,4 @@ databases:
   - name: eduoo-db
     plan: free
     region: oregon
+
