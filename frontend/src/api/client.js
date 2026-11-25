@@ -69,10 +69,25 @@ class ApiClient {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    let response = await fetch(url, {
-      ...options,
-      headers,
-    });
+    let response;
+    try {
+      response = await fetch(url, {
+        ...options,
+        headers,
+      });
+    } catch (networkErr) {
+      const isLocalhost = url.includes('localhost') || url.includes('127.0.0.1');
+      if (isLocalhost && typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
+        const err = new Error(
+          'Frontend is configured to connect to localhost:8000. Please set REACT_APP_API_URL in your Vercel Environment Variables (e.g. https://your-backend.onrender.com/api) and redeploy.'
+        );
+        err.code = 'CONFIG_ERROR';
+        throw err;
+      }
+      const err = new Error(`Unable to connect to backend at ${url}. Please verify your Render service is running.`);
+      err.code = 'NETWORK_ERROR';
+      throw err;
+    }
 
     // Handle 401 token expiry retry once
     if (response.status === 401 && this.getRefreshToken()) {
@@ -98,6 +113,15 @@ class ApiClient {
       }
       if (!extractedMsg && data?.error && typeof data.error === 'string') {
         extractedMsg = data.error;
+      }
+      if (!extractedMsg && !isJson) {
+        if (response.status === 502 || response.status === 503) {
+          extractedMsg = 'Backend server is booting up or spinning down on Render. Please wait 30 seconds and try again.';
+        } else if (response.status === 500) {
+          extractedMsg = 'Backend database or server error (HTTP 500). Please verify database connection on Render.';
+        } else if (response.status === 404) {
+          extractedMsg = `API endpoint not found (HTTP 404 at ${url}). Check REACT_APP_API_URL in Vercel settings.`;
+        }
       }
       const errorObj = {
         code: data?.error?.code || `HTTP_${response.status}`,

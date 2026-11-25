@@ -63,20 +63,79 @@ def _generate_and_send_otp(user, sync: bool = False) -> dict:
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def register_view(request):
-    raw_email = (request.data.get("email") or "").strip().lower()
-    require_verification = getattr(settings, "REQUIRE_EMAIL_VERIFICATION", True)
+    try:
+        raw_email = (request.data.get("email") or "").strip().lower()
+        require_verification = getattr(settings, "REQUIRE_EMAIL_VERIFICATION", True)
 
-    # Check if an unverified user with this email already exists
-    existing_unverified = User.objects.filter(email__iexact=raw_email, is_email_verified=False).first()
-    if existing_unverified and request.data.get("password"):
-        serializer = RegisterSerializer(existing_unverified, data=request.data, partial=True)
+        # Check if an unverified user with this email already exists
+        existing_unverified = User.objects.filter(email__iexact=raw_email, is_email_verified=False).first()
+        if existing_unverified and request.data.get("password"):
+            serializer = RegisterSerializer(existing_unverified, data=request.data, partial=True)
+            if not serializer.is_valid():
+                first_err = next(iter(serializer.errors.values())) if serializer.errors else "Registration failed."
+                first_err = first_err[0] if isinstance(first_err, (list, tuple)) else str(first_err)
+                return Response(
+                    {"success": False, "error": {"code": "VALIDATION_ERROR", "message": str(first_err), "details": serializer.errors}},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            user = serializer.save()
+
+            if not require_verification:
+                user.is_active = True
+                user.is_email_verified = True
+                user.save(update_fields=["is_active", "is_email_verified"])
+                refresh = RefreshToken.for_user(user)
+                return Response(
+                    {
+                        "success": True,
+                        "requires_verification": False,
+                        "access": str(refresh.access_token),
+                        "refresh": str(refresh),
+                        "user": UserSerializer(user).data,
+                        "message": "Account created and activated successfully! Welcome to Eduoo.",
+                    },
+                    status=status.HTTP_201_CREATED,
+                )
+
+            user.is_active = False
+            user.is_email_verified = False
+            user.save(update_fields=["is_active", "is_email_verified"])
+            otp_info = _generate_and_send_otp(user)
+            otp_code = otp_info["otp_code"]
+
+            msg = f"Verification code sent to {user.email}. Please enter the OTP to activate your account."
+            expose_fallback = getattr(settings, "EXPOSE_OTP_FALLBACK", True)
+            resp_payload = {
+                "success": True,
+                "requires_verification": True,
+                "email": user.email,
+                "message": msg,
+            }
+            if expose_fallback and (not otp_info.get("email_sent") or not getattr(settings, "EMAIL_HOST_USER", None) or settings.DEBUG):
+                resp_payload["otp_hint"] = otp_code
+                resp_payload["message"] = (
+                    f"Account created. If email delivery is delayed or blocked by your provider, your OTP is: {otp_code}"
+                )
+            return Response(resp_payload, status=status.HTTP_201_CREATED)
+
+        serializer = RegisterSerializer(data=request.data)
         if not serializer.is_valid():
-            first_err = next(iter(serializer.errors.values())) if serializer.errors else "Registration failed."
-            first_err = first_err[0] if isinstance(first_err, (list, tuple)) else str(first_err)
+            first_err = "Registration failed."
+            if serializer.errors:
+                val = next(iter(serializer.errors.values()))
+                first_err = val[0] if isinstance(val, (list, tuple)) else str(val)
             return Response(
-                {"success": False, "error": {"code": "VALIDATION_ERROR", "message": str(first_err), "details": serializer.errors}},
+                {
+                    "success": False,
+                    "error": {
+                        "code": "VALIDATION_ERROR",
+                        "message": str(first_err),
+                        "details": serializer.errors,
+                    },
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
         user = serializer.save()
 
         if not require_verification:
@@ -91,7 +150,7 @@ def register_view(request):
                     "access": str(refresh.access_token),
                     "refresh": str(refresh),
                     "user": UserSerializer(user).data,
-                    "message": "Account created and activated successfully! Welcome to Eduoo.",
+                    "message": "Registration successful! Welcome to Eduoo.",
                 },
                 status=status.HTTP_201_CREATED,
             )
@@ -99,23 +158,42 @@ def register_view(request):
         user.is_active = False
         user.is_email_verified = False
         user.save(update_fields=["is_active", "is_email_verified"])
+
+        # Generate and dispatch 6-digit OTP verification email
         otp_info = _generate_and_send_otp(user)
         otp_code = otp_info["otp_code"]
 
-        msg = f"Verification code sent to {user.email}. Please enter the OTP to activate your account."
+        msg = f"Verification code sent to {user.email}. Please enter the 6-digit OTP to activate your account."
         expose_fallback = getattr(settings, "EXPOSE_OTP_FALLBACK", True)
         resp_payload = {
             "success": True,
             "requires_verification": True,
             "email": user.email,
             "message": msg,
+            "user": UserSerializer(user).data,
         }
         if expose_fallback and (not otp_info.get("email_sent") or not getattr(settings, "EMAIL_HOST_USER", None) or settings.DEBUG):
             resp_payload["otp_hint"] = otp_code
             resp_payload["message"] = (
                 f"Account created. If email delivery is delayed or blocked by your provider, your OTP is: {otp_code}"
             )
+
         return Response(resp_payload, status=status.HTTP_201_CREATED)
+    except Exception as exc:
+        import logging
+        import traceback
+        logging.getLogger(__name__).error("Registration error: %s\n%s", exc, traceback.format_exc())
+        return Response(
+            {
+                "success": False,
+                "error": {
+                    "code": "REGISTRATION_FAILED",
+                    "message": f"Registration failed: {str(exc)}",
+                    "details": str(exc),
+                },
+            },
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
 
     serializer = RegisterSerializer(data=request.data)
     if not serializer.is_valid():

@@ -99,5 +99,21 @@ def custom_exception_handler(exc, context):
                 "message": message,
             },
         }
+    else:
+        # Fallback for unhandled exceptions (DatabaseError, OperationalError, etc.)
+        import logging
+        import traceback
+        logging.getLogger(__name__).error("Unhandled server exception: %s\n%s", exc, traceback.format_exc())
+        response = Response(
+            {
+                "success": False,
+                "error": {
+                    "code": "INTERNAL_SERVER_ERROR",
+                    "message": str(exc) if str(exc).strip() else "An internal server error occurred.",
+                    "details": str(exc),
+                },
+            },
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
 
     return response

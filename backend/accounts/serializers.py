@@ -104,6 +104,38 @@ class RegisterSerializer(serializers.ModelSerializer):
 
         return user
 
+    def update(self, instance, validated_data):
+        validated_data.pop("password_confirm", None)
+        password = validated_data.pop("password", None)
+        profile_data = validated_data.pop("profile", None)
+
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+
+        if password:
+            instance.set_password(password)
+
+        instance.save()
+
+        if profile_data or not hasattr(instance, "profile"):
+            UserProfile.objects.update_or_create(
+                user=instance,
+                defaults=profile_data or {
+                    "full_name": instance.full_name,
+                    "college": instance.college,
+                    "branch": instance.branch,
+                    "graduation_year": instance.graduation_year,
+                    "target_role": instance.target_role,
+                    "daily_study_hours": instance.daily_study_hours,
+                    "bio": instance.bio,
+                    "preferred_learning_style": instance.preferred_learning_style,
+                    "experience_level": instance.experience_level,
+                    "career_goal": instance.career_goal,
+                },
+            )
+
+        return instance
+
 
 class LoginSerializer(serializers.Serializer):
     email = serializers.CharField(required=False, allow_blank=True)

@@ -98,10 +98,15 @@ if DATABASE_URL:
         )
     }
 else:
+    # On Render cloud hosting without DATABASE_URL, use /tmp which is world-writable
+    if os.getenv("RENDER"):
+        sqlite_path = Path("/tmp/eduoo_db.sqlite3")
+    else:
+        sqlite_path = BASE_DIR / "db.sqlite3"
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
-            "NAME": BASE_DIR / "db.sqlite3",
+            "NAME": sqlite_path,
         }
     }
 
