@@ -192,7 +192,13 @@ DEFAULT_FROM_EMAIL = os.getenv(
     "DEFAULT_FROM_EMAIL",
     f"Eduoo AI <{_email_host_user}>" if _email_host_user else "Eduoo AI <notifications@eduoo.ai>",
 )
-EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "25"))
+EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "10"))
+
+# Registration & Email Verification Policy
+# Set REQUIRE_EMAIL_VERIFICATION=False in Render environment variables to allow instant
+# registration without requiring an SMTP email service.
+REQUIRE_EMAIL_VERIFICATION = os.getenv("REQUIRE_EMAIL_VERIFICATION", "True").lower() in ("true", "1", "yes")
+EXPOSE_OTP_FALLBACK = os.getenv("EXPOSE_OTP_FALLBACK", "True").lower() in ("true", "1", "yes")
 
 # Celery Configuration
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")

@@ -177,14 +177,17 @@ class EmailNotificationService:
                     error_msg = raw_error
 
                 # Prominently print in terminal console so local developers/users see OTPs/reports immediately
-                print("\n" + "=" * 70, flush=True)
-                print(f"⚠️  [EDUOO EMAIL SMTP DELIVERY FAILED]", flush=True)
-                print(f"Recipient: {recipient}", flush=True)
-                print(f"Subject:   {subject}", flush=True)
-                print(f"Reason:    {error_msg}", flush=True)
-                print("-" * 70, flush=True)
-                print(f"CONSOLE EMAIL CONTENT FALLBACK:\n{text_body}", flush=True)
-                print("=" * 70 + "\n", flush=True)
+                try:
+                    print("\n" + "=" * 70, flush=True)
+                    print("[WARNING] [EDUOO EMAIL SMTP DELIVERY FAILED]", flush=True)
+                    print(f"Recipient: {recipient}", flush=True)
+                    print(f"Subject:   {subject}", flush=True)
+                    print(f"Reason:    {error_msg}", flush=True)
+                    print("-" * 70, flush=True)
+                    print(f"CONSOLE EMAIL CONTENT FALLBACK:\n{text_body}", flush=True)
+                    print("=" * 70 + "\n", flush=True)
+                except Exception:
+                    pass
 
                 logger.error("Failed to deliver custom email '%s' to %s: %s", subject, recipient, error_msg)
                 return {"success": False, "recipient": recipient, "error": error_msg}

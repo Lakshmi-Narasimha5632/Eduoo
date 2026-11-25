@@ -32,6 +32,7 @@ export const Register = () => {
   });
 
   const [otp, setOtp] = useState('');
+  const [otpHint, setOtpHint] = useState('');
   const [error, setError] = useState('');
   const [infoMsg, setInfoMsg] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -70,6 +71,9 @@ export const Register = () => {
       const res = await register(form);
       if (res?.requires_verification) {
         setStep('otp');
+        if (res?.otp_hint) {
+          setOtpHint(res.otp_hint);
+        }
         setInfoMsg(res.message || `A 6-digit verification code was sent to ${form.email}.`);
         setResendCooldown(60);
       } else {
@@ -111,6 +115,9 @@ export const Register = () => {
     setResending(true);
     try {
       const res = await resendOtp(form.email);
+      if (res?.otp_hint) {
+        setOtpHint(res.otp_hint);
+      }
       setInfoMsg(res?.message || 'A fresh verification code has been sent to your email.');
       setResendCooldown(60);
     } catch (err) {
@@ -285,6 +292,22 @@ export const Register = () => {
               <span className="text-xs text-slate-400 block mb-1">Verification code sent to</span>
               <span className="text-sm font-bold text-white block">{form.email}</span>
             </div>
+
+            {otpHint && (
+              <div className="bg-indigo-500/10 border border-indigo-500/30 p-3.5 rounded-xl text-xs text-indigo-300 flex items-center justify-between gap-3">
+                <div>
+                  <span className="font-semibold block text-indigo-200">Email Delivery Offline / Direct Code</span>
+                  <span>Code: <strong className="text-white font-mono text-sm tracking-widest">{otpHint}</strong></span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setOtp(otpHint)}
+                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-bold text-xs shrink-0 transition shadow-sm"
+                >
+                  Auto-fill Code
+                </button>
+              </div>
+            )}
 
             <div>
               <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2 text-center">

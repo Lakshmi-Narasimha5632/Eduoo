@@ -184,3 +184,24 @@ class TestAuthAPI:
         assert response.status_code == 200
         assert "target_roles" in response.json()
         assert "Full Stack Developer" in response.json()["target_roles"]
+
+    def test_register_when_verification_disabled(self, settings):
+        settings.REQUIRE_EMAIL_VERIFICATION = False
+        client = APIClient()
+        payload = {
+            "email": "instant_user@example.com",
+            "username": "instant_user",
+            "password": "StrongPass123!",
+            "password_confirm": "StrongPass123!",
+            "full_name": "Instant User",
+        }
+        response = client.post("/api/auth/register/", payload, format="json")
+        assert response.status_code == 201
+        data = response.json()
+        assert data["success"] is True
+        assert data["requires_verification"] is False
+        assert "access" in data and "refresh" in data
+
+        user = User.objects.get(email="instant_user@example.com")
+        assert user.is_email_verified is True
+        assert user.is_active is True

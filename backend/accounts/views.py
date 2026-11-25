@@ -18,8 +18,8 @@ from .serializers import LoginSerializer, ProfileUpdateSerializer, RegisterSeria
 User = get_user_model()
 
 
-def _generate_and_send_otp(user, sync: bool = False) -> str:
-    """Generates a secure 6-digit OTP, records it, and dispatches an email."""
+def _generate_and_send_otp(user, sync: bool = False) -> dict:
+    """Generates a secure 6-digit OTP, records it, and safely dispatches an email."""
     # Invalidate existing active OTPs
     EmailVerificationOTP.objects.filter(email__iexact=user.email, is_used=False).update(is_used=True)
 
@@ -31,15 +31,32 @@ def _generate_and_send_otp(user, sync: bool = False) -> str:
         expires_at=timezone.now() + timedelta(minutes=10),
     )
 
-    print(f"\n🔑 [EDUOO REGISTRATION OTP FOR {user.email}]: {otp_code}\n", flush=True)
+    try:
+        print(f"\n[EDUOO REGISTRATION OTP FOR {user.email}]: {otp_code}\n", flush=True)
+    except Exception:
+        pass
 
-    NotificationService.send_registration_otp(
-        recipient=user.email,
-        otp_code=otp_code,
-        full_name=user.full_name or user.username,
-        sync=sync,
-    )
-    return otp_code
+    email_sent = False
+    email_error = None
+    try:
+        res = NotificationService.send_registration_otp(
+            recipient=user.email,
+            otp_code=otp_code,
+            full_name=user.full_name or user.username,
+            sync=sync,
+        )
+        if isinstance(res, dict):
+            email_sent = res.get("success", False)
+            email_error = res.get("error")
+    except Exception as exc:
+        email_sent = False
+        email_error = str(exc)
+
+    return {
+        "otp_code": otp_code,
+        "email_sent": email_sent,
+        "email_error": email_error,
+    }
 
 
 
@@ -47,6 +64,7 @@ def _generate_and_send_otp(user, sync: bool = False) -> str:
 @permission_classes([AllowAny])
 def register_view(request):
     raw_email = (request.data.get("email") or "").strip().lower()
+    require_verification = getattr(settings, "REQUIRE_EMAIL_VERIFICATION", True)
 
     # Check if an unverified user with this email already exists
     existing_unverified = User.objects.filter(email__iexact=raw_email, is_email_verified=False).first()
@@ -60,19 +78,44 @@ def register_view(request):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         user = serializer.save()
+
+        if not require_verification:
+            user.is_active = True
+            user.is_email_verified = True
+            user.save(update_fields=["is_active", "is_email_verified"])
+            refresh = RefreshToken.for_user(user)
+            return Response(
+                {
+                    "success": True,
+                    "requires_verification": False,
+                    "access": str(refresh.access_token),
+                    "refresh": str(refresh),
+                    "user": UserSerializer(user).data,
+                    "message": "Account created and activated successfully! Welcome to Eduoo.",
+                },
+                status=status.HTTP_201_CREATED,
+            )
+
         user.is_active = False
         user.is_email_verified = False
         user.save(update_fields=["is_active", "is_email_verified"])
-        _generate_and_send_otp(user)
-        return Response(
-            {
-                "success": True,
-                "requires_verification": True,
-                "email": user.email,
-                "message": f"Verification code sent to {user.email}. Please enter the OTP to activate your account.",
-            },
-            status=status.HTTP_201_CREATED,
-        )
+        otp_info = _generate_and_send_otp(user)
+        otp_code = otp_info["otp_code"]
+
+        msg = f"Verification code sent to {user.email}. Please enter the OTP to activate your account."
+        expose_fallback = getattr(settings, "EXPOSE_OTP_FALLBACK", True)
+        resp_payload = {
+            "success": True,
+            "requires_verification": True,
+            "email": user.email,
+            "message": msg,
+        }
+        if expose_fallback and (not otp_info.get("email_sent") or not getattr(settings, "EMAIL_HOST_USER", None) or settings.DEBUG):
+            resp_payload["otp_hint"] = otp_code
+            resp_payload["message"] = (
+                f"Account created. If email delivery is delayed or blocked by your provider, your OTP is: {otp_code}"
+            )
+        return Response(resp_payload, status=status.HTTP_201_CREATED)
 
     serializer = RegisterSerializer(data=request.data)
     if not serializer.is_valid():
@@ -93,23 +136,48 @@ def register_view(request):
         )
 
     user = serializer.save()
+
+    if not require_verification:
+        user.is_active = True
+        user.is_email_verified = True
+        user.save(update_fields=["is_active", "is_email_verified"])
+        refresh = RefreshToken.for_user(user)
+        return Response(
+            {
+                "success": True,
+                "requires_verification": False,
+                "access": str(refresh.access_token),
+                "refresh": str(refresh),
+                "user": UserSerializer(user).data,
+                "message": "Registration successful! Welcome to Eduoo.",
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
     user.is_active = False
     user.is_email_verified = False
     user.save(update_fields=["is_active", "is_email_verified"])
 
     # Generate and dispatch 6-digit OTP verification email
-    _generate_and_send_otp(user)
+    otp_info = _generate_and_send_otp(user)
+    otp_code = otp_info["otp_code"]
 
-    return Response(
-        {
-            "success": True,
-            "requires_verification": True,
-            "email": user.email,
-            "message": f"Verification code sent to {user.email}. Please enter the 6-digit OTP to activate your account.",
-            "user": UserSerializer(user).data,
-        },
-        status=status.HTTP_201_CREATED,
-    )
+    msg = f"Verification code sent to {user.email}. Please enter the 6-digit OTP to activate your account."
+    expose_fallback = getattr(settings, "EXPOSE_OTP_FALLBACK", True)
+    resp_payload = {
+        "success": True,
+        "requires_verification": True,
+        "email": user.email,
+        "message": msg,
+        "user": UserSerializer(user).data,
+    }
+    if expose_fallback and (not otp_info.get("email_sent") or not getattr(settings, "EMAIL_HOST_USER", None) or settings.DEBUG):
+        resp_payload["otp_hint"] = otp_code
+        resp_payload["message"] = (
+            f"Account created. If email delivery is delayed or blocked by your provider, your OTP is: {otp_code}"
+        )
+
+    return Response(resp_payload, status=status.HTTP_201_CREATED)
 
 
 @api_view(["POST"])
@@ -255,11 +323,20 @@ def resend_otp_view(request):
             status=status.HTTP_429_TOO_MANY_REQUESTS,
         )
 
-    _generate_and_send_otp(user)
-    return Response(
-        {"success": True, "message": f"A fresh 6-digit verification code has been sent to {user.email}."},
-        status=status.HTTP_200_OK,
-    )
+    otp_info = _generate_and_send_otp(user)
+    otp_code = otp_info["otp_code"]
+    msg = f"A fresh 6-digit verification code has been sent to {user.email}."
+    expose_fallback = getattr(settings, "EXPOSE_OTP_FALLBACK", True)
+    resp_payload = {
+        "success": True,
+        "message": msg,
+    }
+    if expose_fallback and (not otp_info.get("email_sent") or not getattr(settings, "EMAIL_HOST_USER", None) or settings.DEBUG):
+        resp_payload["otp_hint"] = otp_code
+        resp_payload["message"] = (
+            f"Fresh code generated. If email delivery is delayed or blocked by your provider, your OTP is: {otp_code}"
+        )
+    return Response(resp_payload, status=status.HTTP_200_OK)
 
 
 @api_view(["POST"])
@@ -311,7 +388,8 @@ def login_view(request):
             status=status.HTTP_401_UNAUTHORIZED,
         )
 
-    if not user.is_email_verified:
+    require_verification = getattr(settings, "REQUIRE_EMAIL_VERIFICATION", True)
+    if require_verification and not user.is_email_verified:
         return Response(
             {
                 "success": False,
