@@ -189,8 +189,12 @@ else:
 
 EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
 EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
-EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "True" if EMAIL_PORT == 465 else "False").lower() in ("true", "1", "yes")
-EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "False" if EMAIL_USE_SSL else "True").lower() in ("true", "1", "yes")
+if EMAIL_PORT == 465 or os.getenv("EMAIL_USE_SSL", "").lower() in ("true", "1", "yes"):
+    EMAIL_USE_SSL = True
+    EMAIL_USE_TLS = False
+else:
+    EMAIL_USE_TLS = True
+    EMAIL_USE_SSL = False
 EMAIL_HOST_USER = _email_host_user
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "").replace(" ", "").strip()
 DEFAULT_FROM_EMAIL = os.getenv(
