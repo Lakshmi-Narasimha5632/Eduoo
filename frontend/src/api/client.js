@@ -3,7 +3,14 @@
  * Handles JWT token injection, token refresh, and standardized error parsing.
  */
 
-const API_BASE = (process.env.REACT_APP_API_URL || 'http://localhost:8000/api').replace(/\/+$/, '');
+const rawBase = (
+  process.env.REACT_APP_API_URL ||
+  process.env.REACT_APP_BACKEND_URL ||
+  'http://localhost:8000/api'
+).trim().replace(/\/+$/, '');
+
+// Ensure /api suffix is present whether the user included it or not
+const API_BASE = rawBase.endsWith('/api') ? rawBase : `${rawBase}/api`;
 
 class ApiClient {
   getAccessToken() {
