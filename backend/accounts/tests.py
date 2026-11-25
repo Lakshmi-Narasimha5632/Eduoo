@@ -205,3 +205,24 @@ class TestAuthAPI:
         user = User.objects.get(email="instant_user@example.com")
         assert user.is_email_verified is True
         assert user.is_active is True
+
+    def test_login_with_invalid_or_expired_bearer_token(self, django_user_model):
+        """Verify that stale Authorization headers in localStorage do not block login."""
+        django_user_model.objects.create_user(
+            email="stale_token_user@example.com",
+            username="stale_token_user",
+            password="StrongPass123!",
+            is_email_verified=True,
+            is_active=True,
+        )
+        client = APIClient()
+        # Simulate browser sending an invalid/expired token from an old session
+        client.credentials(HTTP_AUTHORIZATION="Bearer totally_invalid_corrupted_jwt_token_12345")
+        response = client.post(
+            "/api/auth/login/",
+            {"email": "stale_token_user@example.com", "password": "StrongPass123!"},
+            format="json",
+        )
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+        assert "access" in response.json()

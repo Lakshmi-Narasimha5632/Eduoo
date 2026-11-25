@@ -15,6 +15,7 @@ export const AuthProvider = ({ children }) => {
         localStorage.setItem('eduoo_user', JSON.stringify(res.user));
       }
     } catch {
+      api.clearTokens();
       setUser(null);
     } finally {
       setLoading(false);
@@ -37,6 +38,7 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const login = async (email, password) => {
+    api.clearTokens();
     const res = await api.post('/auth/login/', { email, password });
     if (res.access && res.user) {
       api.setTokens(res.access, res.refresh);
@@ -46,6 +48,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   const register = async (data) => {
+    api.clearTokens();
     const res = await api.post('/auth/register/', data);
     if (res.access && res.user) {
       api.setTokens(res.access, res.refresh);

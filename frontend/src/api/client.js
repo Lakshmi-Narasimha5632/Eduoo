@@ -72,7 +72,13 @@ class ApiClient {
       headers['Content-Type'] = 'application/json';
     }
 
-    if (token) {
+    const isPublicAuth =
+      url.includes('/auth/login') ||
+      url.includes('/auth/register') ||
+      url.includes('/auth/verify-email') ||
+      url.includes('/auth/resend-otp');
+
+    if (token && !isPublicAuth) {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
@@ -96,8 +102,8 @@ class ApiClient {
       throw err;
     }
 
-    // Handle 401 token expiry retry once
-    if (response.status === 401 && this.getRefreshToken()) {
+    // Handle 401 token expiry retry once (skip for login/register/refresh auth routes)
+    if (response.status === 401 && !isPublicAuth && !url.includes('/auth/refresh') && this.getRefreshToken()) {
       const newToken = await this.refreshAccessToken();
       if (newToken) {
         headers['Authorization'] = `Bearer ${newToken}`;
@@ -130,6 +136,13 @@ class ApiClient {
           extractedMsg = `API endpoint not found (HTTP 404 at ${url}). Check REACT_APP_API_URL in Vercel settings.`;
         }
       }
+
+      // Convert cryptic SimpleJWT messages into clear user messages
+      if (extractedMsg && typeof extractedMsg === 'string' && extractedMsg.toLowerCase().includes('token not valid')) {
+        this.clearTokens();
+        extractedMsg = isPublicAuth ? 'Invalid email/username or password.' : 'Your session has expired. Please sign in again.';
+      }
+
       const errorObj = {
         code: data?.error?.code || `HTTP_${response.status}`,
         message:

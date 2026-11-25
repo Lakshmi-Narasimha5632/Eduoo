@@ -92,6 +92,11 @@ def custom_exception_handler(exc, context):
         else:
             message = str(response.data)
 
+        # Standardize cryptic SimpleJWT errors into clear, actionable messages
+        if "token not valid" in message.lower() or "token_not_valid" in str(error_code).lower():
+            message = "Your authentication session has expired or is invalid. Please sign in again."
+            error_code = "SESSION_EXPIRED"
+
         response.data = {
             "success": False,
             "error": {

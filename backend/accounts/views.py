@@ -5,7 +5,7 @@ from django.contrib.auth import authenticate, get_user_model
 from django.db import models
 from django.utils import timezone
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -61,6 +61,7 @@ def _generate_and_send_otp(user, sync: bool = False) -> dict:
 
 
 @api_view(["POST"])
+@authentication_classes([])
 @permission_classes([AllowAny])
 def register_view(request):
     try:
@@ -259,6 +260,7 @@ def register_view(request):
 
 
 @api_view(["POST"])
+@authentication_classes([])
 @permission_classes([AllowAny])
 def verify_email_otp_view(request):
     email = str(request.data.get("email") or "").strip().lower()
@@ -362,6 +364,7 @@ def verify_email_otp_view(request):
 
 
 @api_view(["POST"])
+@authentication_classes([])
 @permission_classes([AllowAny])
 def resend_otp_view(request):
     email = str(request.data.get("email") or "").strip().lower()
@@ -418,6 +421,7 @@ def resend_otp_view(request):
 
 
 @api_view(["POST"])
+@authentication_classes([])
 @permission_classes([AllowAny])
 def login_view(request):
     serializer = LoginSerializer(data=request.data)
@@ -564,6 +568,7 @@ def change_password_view(request):
 
 
 @api_view(["GET"])
+@authentication_classes([])
 @permission_classes([AllowAny])
 def target_roles_view(request):
     from .services import UserService
