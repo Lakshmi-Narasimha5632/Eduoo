@@ -195,18 +195,24 @@ class EmailNotificationService:
             except Exception as resend_exc:
                 logger.warning("Resend HTTPS API dispatch failed: %s. Falling back...", resend_exc)
 
-        # 2. Try Brevo HTTPS API if key configured
+        # 2. Try Brevo HTTPS API if key configured (or if user pasted an xkeysib- key into EMAIL_HOST_PASSWORD)
         brevo_api_key = getattr(settings, "BREVO_API_KEY", "") or os.getenv("BREVO_API_KEY", "")
+        if not brevo_api_key:
+            host_pass = getattr(settings, "EMAIL_HOST_PASSWORD", "") or os.getenv("EMAIL_HOST_PASSWORD", "")
+            if host_pass and host_pass.strip().startswith("xkeysib-"):
+                brevo_api_key = host_pass.strip()
         brevo_api_key = brevo_api_key.strip() if brevo_api_key else ""
         if brevo_api_key:
             try:
                 import requests
+                brevo_sender = getattr(settings, "EMAIL_HOST_USER", None) or os.getenv("EMAIL_HOST_USER", "")
                 from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "Eduoo AI <notifications@eduoo.ai>")
-                sender_email = from_email
+                sender_email = brevo_sender.strip() if brevo_sender else from_email
                 sender_name = "Eduoo AI"
                 if "<" in from_email and ">" in from_email:
                     sender_name = from_email.split("<")[0].strip() or "Eduoo AI"
-                    sender_email = from_email.split("<")[1].split(">")[0].strip()
+                    if not brevo_sender:
+                        sender_email = from_email.split("<")[1].split(">")[0].strip()
 
                 resp = requests.post(
                     "https://api.brevo.com/v3/smtp/email",
@@ -257,9 +263,10 @@ class EmailNotificationService:
                 port = getattr(settings, "EMAIL_PORT", 587)
                 error_msg = (
                     f"Email connection to {host}:{port} timed out. "
-                    "Render blocks direct outbound connections to Gmail SMTP. "
-                    "To fix this on Render, use Resend (add RESEND_API_KEY in Render) or "
-                    "Brevo (set EMAIL_HOST=smtp-relay.brevo.com in Render)."
+                    "Render's free tier blocks all outbound SMTP socket ports (25, 465, 587). "
+                    "To send real-time emails on Render, use an HTTPS API (Port 443): "
+                    "Add RESEND_API_KEY (from resend.com - takes 1 min, free) "
+                    "or BREVO_API_KEY (from brevo.com) in your Render Environment Variables."
                 )
             elif "534" in raw_error or "WebLoginRequired" in raw_error:
                 error_msg = (
