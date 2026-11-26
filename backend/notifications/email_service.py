@@ -191,9 +191,19 @@ class EmailNotificationService:
                         err_info = resp.json().get("message", resp.text)
                     except Exception:
                         pass
-                    logger.warning("Resend HTTPS API returned status %s: %s. Falling back...", resp.status_code, err_info)
+                    logger.error("Resend API failed (%s): %s", resp.status_code, err_info)
+                    return {
+                        "success": False,
+                        "recipient": recipient,
+                        "error": f"Resend API error ({resp.status_code}): {err_info}",
+                    }
             except Exception as resend_exc:
-                logger.warning("Resend HTTPS API dispatch failed: %s. Falling back...", resend_exc)
+                logger.error("Resend API exception: %s", resend_exc)
+                return {
+                    "success": False,
+                    "recipient": recipient,
+                    "error": f"Resend API request failed: {str(resend_exc)}",
+                }
 
         # 2. Try Brevo HTTPS API if key configured (or if user pasted an xkeysib- key into EMAIL_HOST_PASSWORD)
         brevo_api_key = getattr(settings, "BREVO_API_KEY", "") or os.getenv("BREVO_API_KEY", "")
@@ -205,14 +215,22 @@ class EmailNotificationService:
         if brevo_api_key:
             try:
                 import requests
-                brevo_sender = getattr(settings, "EMAIL_HOST_USER", None) or os.getenv("EMAIL_HOST_USER", "")
                 from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "Eduoo AI <notifications@eduoo.ai>")
-                sender_email = brevo_sender.strip() if brevo_sender else from_email
-                sender_name = "Eduoo AI"
-                if "<" in from_email and ">" in from_email:
-                    sender_name = from_email.split("<")[0].strip() or "Eduoo AI"
-                    if not brevo_sender:
-                        sender_email = from_email.split("<")[1].split(">")[0].strip()
+                brevo_sender = getattr(settings, "EMAIL_HOST_USER", None) or os.getenv("EMAIL_HOST_USER", "")
+
+                # Cleanly extract sender email and display name
+                raw_email = brevo_sender.strip() if brevo_sender and brevo_sender.strip() else from_email
+                if "<" in raw_email and ">" in raw_email:
+                    sender_email = raw_email.split("<")[1].split(">")[0].strip()
+                    sender_name = raw_email.split("<")[0].strip() or "Eduoo AI"
+                else:
+                    sender_email = raw_email.strip()
+                    sender_name = "Eduoo AI"
+
+                if "<" in from_email:
+                    name_part = from_email.split("<")[0].strip()
+                    if name_part:
+                        sender_name = name_part
 
                 resp = requests.post(
                     "https://api.brevo.com/v3/smtp/email",
@@ -238,9 +256,24 @@ class EmailNotificationService:
                         "provider": "brevo",
                     }
                 else:
-                    logger.warning("Brevo API returned status %s: %s. Falling back...", resp.status_code, resp.text)
+                    err_msg = resp.text
+                    try:
+                        err_msg = resp.json().get("message", resp.text)
+                    except Exception:
+                        pass
+                    logger.error("Brevo API failed (%s): %s", resp.status_code, err_msg)
+                    return {
+                        "success": False,
+                        "recipient": recipient,
+                        "error": f"Brevo API error ({resp.status_code}): {err_msg}",
+                    }
             except Exception as brevo_exc:
-                logger.warning("Brevo API dispatch failed: %s. Falling back...", brevo_exc)
+                logger.error("Brevo API dispatch failed: %s", brevo_exc)
+                return {
+                    "success": False,
+                    "recipient": recipient,
+                    "error": f"Brevo API request failed: {str(brevo_exc)}",
+                }
 
         # 3. Fall back to standard Django Mail Backend (SMTP / Brevo Relay / Console)
         from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "Eduoo AI <notifications@eduoo.ai>")

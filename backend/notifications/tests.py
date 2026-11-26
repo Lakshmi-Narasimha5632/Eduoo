@@ -127,3 +127,41 @@ class TestNotificationsAPI:
         )
         assert result["success"] is True
         assert result["provider"] == "resend"
+
+    def test_brevo_api_dispatch(self, monkeypatch):
+        from notifications.email_service import EmailNotificationService
+        from django.conf import settings
+
+        monkeypatch.setattr(settings, "RESEND_API_KEY", "")
+        monkeypatch.setattr(settings, "BREVO_API_KEY", "xkeysib-test_key_12345")
+        monkeypatch.setattr(settings, "DEFAULT_FROM_EMAIL", "Eduoo AI <naninarasimha3091@gmail.com>")
+
+        captured_payload = {}
+
+        class MockResponse:
+            status_code = 201
+            text = '{"messageId": "msg_brevo_123"}'
+            headers = {"content-type": "application/json"}
+
+            def json(self):
+                return {"messageId": "msg_brevo_123"}
+
+        def mock_post(url, headers=None, json=None, timeout=None):
+            captured_payload["url"] = url
+            captured_payload["headers"] = headers
+            captured_payload["json"] = json
+            return MockResponse()
+
+        import requests
+        monkeypatch.setattr(requests, "post", mock_post)
+
+        result = EmailNotificationService._dispatch_raw_email(
+            recipient="brevo_user@example.com",
+            subject="Brevo Test",
+            html_body="<p>Hi from Brevo</p>",
+            text_body="Hi from Brevo",
+        )
+        assert result["success"] is True
+        assert result["provider"] == "brevo"
+        assert captured_payload["json"]["sender"]["email"] == "naninarasimha3091@gmail.com"
+        assert captured_payload["json"]["sender"]["name"] == "Eduoo AI"
