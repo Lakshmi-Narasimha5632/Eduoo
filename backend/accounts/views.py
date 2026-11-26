@@ -112,10 +112,10 @@ def register_view(request):
                 "email": user.email,
                 "message": msg,
             }
-            if expose_fallback and (not otp_info.get("email_sent") or not getattr(settings, "EMAIL_HOST_USER", None) or settings.DEBUG):
+            if expose_fallback:
                 resp_payload["otp_hint"] = otp_code
                 resp_payload["message"] = (
-                    f"Account created. If email delivery is delayed or blocked by your provider, your OTP is: {otp_code}"
+                    f"Verification code sent to {user.email}. Direct code: {otp_code}"
                 )
             return Response(resp_payload, status=status.HTTP_201_CREATED)
 
@@ -173,10 +173,10 @@ def register_view(request):
             "message": msg,
             "user": UserSerializer(user).data,
         }
-        if expose_fallback and (not otp_info.get("email_sent") or not getattr(settings, "EMAIL_HOST_USER", None) or settings.DEBUG):
+        if expose_fallback:
             resp_payload["otp_hint"] = otp_code
             resp_payload["message"] = (
-                f"Account created. If email delivery is delayed or blocked by your provider, your OTP is: {otp_code}"
+                f"Verification code sent to {user.email}. Direct code: {otp_code}"
             )
 
         return Response(resp_payload, status=status.HTTP_201_CREATED)
@@ -412,10 +412,10 @@ def resend_otp_view(request):
         "success": True,
         "message": msg,
     }
-    if expose_fallback and (not otp_info.get("email_sent") or not getattr(settings, "EMAIL_HOST_USER", None) or settings.DEBUG):
+    if expose_fallback:
         resp_payload["otp_hint"] = otp_code
         resp_payload["message"] = (
-            f"Fresh code generated. If email delivery is delayed or blocked by your provider, your OTP is: {otp_code}"
+            f"Fresh code generated for {user.email}. Direct code: {otp_code}"
         )
     return Response(resp_payload, status=status.HTTP_200_OK)
 
