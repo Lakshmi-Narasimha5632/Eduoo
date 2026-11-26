@@ -211,8 +211,19 @@ class EmailNotificationService:
             host_pass = getattr(settings, "EMAIL_HOST_PASSWORD", "") or os.getenv("EMAIL_HOST_PASSWORD", "")
             if host_pass and host_pass.strip().startswith("xkeysib-"):
                 brevo_api_key = host_pass.strip()
-        brevo_api_key = brevo_api_key.strip() if brevo_api_key else ""
+        brevo_api_key = brevo_api_key.strip("'\" \t\r\n") if brevo_api_key else ""
         if brevo_api_key:
+            if brevo_api_key.startswith("xsmtpsib-"):
+                return {
+                    "success": False,
+                    "recipient": recipient,
+                    "error": (
+                        "Invalid key type: You provided a Brevo SMTP key (starts with 'xsmtpsib-'). "
+                        "Brevo's HTTPS API requires an API key (starts with 'xkeysib-'). "
+                        "Go to app.brevo.com -> SMTP & API -> click the 'API Keys' tab (not the SMTP tab) -> click 'Generate a new API key'."
+                    ),
+                }
+
             try:
                 import requests
                 from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "Eduoo AI <notifications@eduoo.ai>")
@@ -261,6 +272,12 @@ class EmailNotificationService:
                         err_msg = resp.json().get("message", resp.text)
                     except Exception:
                         pass
+                    if "key not found" in str(err_msg).lower():
+                        err_msg = (
+                            "Brevo rejected the key ('Key not found'). "
+                            "Please ensure: 1) The key was generated from the 'API Keys' tab at app.brevo.com/settings/keys/api (starts with 'xkeysib-'), NOT the 'SMTP' tab. "
+                            "2) Copy the entire key completely without trailing spaces."
+                        )
                     logger.error("Brevo API failed (%s): %s", resp.status_code, err_msg)
                     return {
                         "success": False,
